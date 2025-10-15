@@ -89,6 +89,11 @@ class LLMService:
             # Fallback to mock response if no LLM is available
             print(f"Using mock response for goal: {goal} (No valid API key found)")
             return self._create_mock_response(goal)
+
+    # Backwards-compatible alias
+    async def generate_plan_breakdown(self, goal: str) -> Dict[str, Any]:
+        """Alias for generate_task_breakdown to support refactored callers."""
+        return await self.generate_task_breakdown(goal)
     
     def _create_task_breakdown_prompt(self, goal: str) -> str:
         """Create a structured prompt for task breakdown."""

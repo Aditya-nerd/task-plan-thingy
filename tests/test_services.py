@@ -10,7 +10,7 @@ async def test_task_planner_service():
     planner = TaskPlannerService(llm_service)
     
     goal = "Create a simple website"
-    plan = await planner.create_plan(goal)
+    plan = await planner.generate_plan(goal)
     
     assert "title" in plan
     assert "description" in plan
@@ -48,7 +48,7 @@ async def test_task_validation():
         ]
     }
     
-    validated = planner._validate_plan(invalid_plan)
+    validated = planner._sanitize_plan(invalid_plan)
     
     task = validated["tasks"][0]
     assert task["estimated_hours"] >= 0.5  # Should be corrected

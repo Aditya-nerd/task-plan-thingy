@@ -64,7 +64,7 @@ async def create_task_plan(
     """
     try:
         # Generate task plan using AI
-        plan_data = await task_planner_service.create_plan(goal_input.goal)
+        plan_data = await task_planner_service.generate_plan(goal_input.goal)
         
         # Save to database
         db_plan = TaskPlan(
