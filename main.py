@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session
 import uvicorn
 import os
 from dotenv import load_dotenv
+import json
+import traceback
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.database import get_db, engine, Base
 from app.models import TaskPlan, Task
@@ -40,6 +43,16 @@ task_planner_service = TaskPlannerService(llm_service)
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
+    # Serve the frontend UI when visiting the site root if the file exists.
+    try:
+        base_dir = os.path.dirname(os.path.realpath(__file__))
+        index_path = os.path.join(base_dir, 'frontend', 'index.html')
+        if os.path.exists(index_path):
+            return FileResponse(index_path, media_type='text/html')
+    except Exception:
+        # If anything fails, fall back to a simple JSON API description
+        pass
+
     return {
         "message": "Smart Task Planner API",
         "version": "0.1.0",
@@ -63,8 +76,14 @@ async def create_task_plan(
         TaskPlanResponse: The generated task plan with tasks and dependencies
     """
     try:
+        print(f"[DEBUG] /plan called with goal: {goal_input.goal}")
         # Generate task plan using AI
-        plan_data = await task_planner_service.generate_plan(goal_input.goal)
+        plan_data = await task_planner_service.create_plan(goal_input.goal)
+        try:
+            print("[DEBUG] Plan data generated:", json.dumps(plan_data, default=str)[:2000])
+        except Exception:
+            print("[DEBUG] Plan data (could not json.dumps) - falling back to str():")
+            print(str(plan_data)[:2000])
         
         # Save to database
         db_plan = TaskPlan(
@@ -125,6 +144,7 @@ async def create_task_plan(
     except Exception as e:
         # Log the error for debugging
         print(f"Error creating task plan: {str(e)}")
+        traceback.print_exc()
         
         # Check if it's an API key error
         if "API key" in str(e) or "invalid_request_error" in str(e):

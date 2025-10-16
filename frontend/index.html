@@ -832,8 +832,25 @@
                     throw new Error(errorMessage);
                 }
 
-                const data = await response.json();
-                displayTaskPlan(data);
+                // Debug: log raw response text and parsed JSON
+                let rawText = await response.text();
+                console.log('Raw /plan response text:', rawText);
+                let data = null;
+                try {
+                    data = JSON.parse(rawText);
+                    console.log('Parsed /plan JSON:', data);
+                } catch (parseErr) {
+                    console.error('Failed to parse /plan response as JSON:', parseErr);
+                    showError('Received unexpected response from the server. Check developer console for details.');
+                }
+
+                // Guard: ensure we have tasks array before rendering
+                if (data && Array.isArray(data.tasks) && data.tasks.length > 0) {
+                    displayTaskPlan(data);
+                } else if (data) {
+                    console.warn('Plan data missing tasks or tasks empty:', data);
+                    showError('Plan was generated but contained no tasks. Check server logs or try a different goal.');
+                }
 
             } catch (err) {
                 console.error('Error:', err);

@@ -8,7 +8,7 @@ class TaskPlannerService:
     def __init__(self, llm_service: LLMService):
         self.llm_service = llm_service
     
-    async def generate_plan(self, goal: str) -> Dict[str, Any]:
+    async def create_plan(self, goal: str) -> Dict[str, Any]:
         """
         Create a comprehensive task plan from a goal.
         
@@ -19,17 +19,22 @@ class TaskPlannerService:
             Dict containing the structured task plan
         """
         # Generate task breakdown using LLM
-        plan_data = await self.llm_service.generate_plan_breakdown(goal)
-
+        plan_data = await self.llm_service.generate_task_breakdown(goal)
+        
         # Validate and enhance the plan
-        validated_plan = self._sanitize_plan(plan_data)
-
+        validated_plan = self._validate_plan(plan_data)
+        
         # Add task sequencing and optimization
-        optimized_plan = self._optimize_sequence(validated_plan)
-
+        optimized_plan = self._optimize_task_sequence(validated_plan)
+        
         return optimized_plan
+
+    # Backwards-compatible alias for older call sites
+    async def generate_plan(self, goal: str) -> Dict[str, Any]:
+        """Alias to maintain backward compatibility with older callers."""
+        return await self.create_plan(goal)
     
-    def _sanitize_plan(self, plan_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _validate_plan(self, plan_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validate and clean up the generated plan.
         
@@ -54,30 +59,29 @@ class TaskPlannerService:
                 "title": task.get("title", f"Task {i+1}"),
                 "description": task.get("description", "Task description"),
                 "estimated_hours": max(0.5, float(task.get("estimated_hours", 4.0))),
-                "priority": self._normalize_priority(task.get("priority", "medium")),
-                "dependencies": self._sanitize_dependencies(task.get("dependencies", []), i),
+                "priority": self._validate_priority(task.get("priority", "medium")),
+                "dependencies": self._validate_dependencies(task.get("dependencies", []), i),
                 "deadline_days_from_start": max(1, int(task.get("deadline_days_from_start", i+1)))
             }
             validated["tasks"].append(validated_task)
         
         return validated
     
-    def _normalize_priority(self, priority: str) -> str:
-        """Normalize task priority to an accepted value."""
+    def _validate_priority(self, priority: str) -> str:
+        """Validate task priority."""
         valid_priorities = ["low", "medium", "high", "critical"]
-        return priority.lower() if priority and priority.lower() in valid_priorities else "medium"
+        return priority.lower() if priority.lower() in valid_priorities else "medium"
     
-    def _sanitize_dependencies(self, dependencies: List[int], current_index: int) -> List[int]:
-        """Sanitize task dependencies to prevent circular references and invalid indices."""
-        if not isinstance(dependencies, list):
-            return []
+    def _validate_dependencies(self, dependencies: List[int], current_index: int) -> List[int]:
+        """Validate task dependencies to prevent circular references."""
+        # Filter out invalid dependencies (self-references and future tasks)
         valid_deps = [
-            dep for dep in dependencies
+            dep for dep in dependencies 
             if isinstance(dep, int) and 0 <= dep < current_index
         ]
         return valid_deps
     
-    def _optimize_sequence(self, plan_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _optimize_task_sequence(self, plan_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Optimize task sequencing for better project flow.
         
@@ -95,18 +99,17 @@ class TaskPlannerService:
         # Calculate task complexity scores
         for i, task in enumerate(tasks):
             task["complexity_score"] = (
-                priority_weights.get(task.get("priority", "medium"), 2) * 2 +
-                len(task.get("dependencies", [])) +
-                min(task.get("estimated_hours", 4.0) / 4, 5)  # Cap hours influence
+                priority_weights.get(task["priority"], 2) * 2 +
+                len(task["dependencies"]) +
+                min(task["estimated_hours"] / 4, 5)  # Cap hours influence
             )
         
         # Ensure deadlines are realistic based on dependencies
         for i, task in enumerate(tasks):
-            deps = task.get("dependencies", [])
-            if deps:
+            if task["dependencies"]:
                 max_dep_deadline = max(
-                    tasks[dep].get("deadline_days_from_start", 0)
-                    for dep in deps
+                    tasks[dep]["deadline_days_from_start"] 
+                    for dep in task["dependencies"]
                 )
                 # Ensure current task starts after dependencies with buffer
                 min_start = max_dep_deadline + 1

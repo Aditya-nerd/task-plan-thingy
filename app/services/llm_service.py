@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
@@ -92,7 +93,10 @@ class LLMService:
 
     # Backwards-compatible alias
     async def generate_plan_breakdown(self, goal: str) -> Dict[str, Any]:
-        """Alias for generate_task_breakdown to support refactored callers."""
+        """Alias for older call sites that expect `generate_plan_breakdown`.
+
+        Keeps backward compatibility; simply delegates to `generate_task_breakdown`.
+        """
         return await self.generate_task_breakdown(goal)
     
     def _create_task_breakdown_prompt(self, goal: str) -> str:
@@ -187,12 +191,74 @@ Respond with only the JSON object, no additional text.
                     max_output_tokens=2000,
                 )
             )
-            
-            content = response.text
-            return json.loads(content)
+            # The Gemini SDK may return various structures. Prefer response.text if present
+            # but fall back to other representations. Be defensive because non-JSON
+            # or empty responses can occur (network issues, quota, auth errors, etc.).
+            content = None
+            # 1) try .text (most likely)
+            if hasattr(response, "text") and response.text:
+                content = response.text
+
+            # 2) try a to_dict or to_json style method
+            if content is None:
+                if hasattr(response, "to_dict"):
+                    try:
+                        content = json.dumps(response.to_dict())
+                    except Exception:
+                        content = None
+
+            # 3) try converting underlying protobuf or raw fields if available
+            if content is None:
+                try:
+                    # Some SDK responses expose _pb or _raw fields
+                    raw = getattr(response, "_pb", None) or getattr(response, "_raw", None)
+                    if raw is not None:
+                        # Attempt to stringify and then parse
+                        content = json.dumps(str(raw))
+                except Exception:
+                    content = None
+
+            # If we still have no usable content, raise to trigger fallback
+            if not content:
+                raise ValueError("Empty or unparseable response from Gemini API")
+
+            # If content is a JSON string, parse it. If parsing fails, propagate to except
+            # Clean common wrappers (Markdown fences like ```json) and surrounding text
+            try:
+                # remove leading/trailing whitespace
+                cleaned = content.strip()
+                # remove leading ```json or ``` markers
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+                # remove trailing ``` markers
+                cleaned = re.sub(r"\s*```$", "", cleaned)
+
+                # If the cleaned text isn't pure JSON, try to extract the first {...} block
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    # find first { and last } to grab JSON object
+                    start = cleaned.find("{")
+                    end = cleaned.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        inner = cleaned[start:end+1]
+                        return json.loads(inner)
+                    # re-raise the original parsing error if extraction didn't work
+                    raise
+
+            except Exception:
+                # allow outer except to handle fallback and logging
+                raise
             
         except Exception as e:
+            # Log the error and return a mock response. Include the error string for debugging.
             print(f"Error with Gemini API: {e}")
+            try:
+                # Safe debug: attempt to show a short summary of response if available
+                raw_dbg = getattr(response, "text", None) or getattr(response, "to_dict", lambda: None)()
+            except Exception:
+                raw_dbg = None
+            if raw_dbg:
+                print(f"Raw Gemini response (truncated): {str(raw_dbg)[:1000]}")
             return self._create_mock_response(prompt.split("Goal: ")[1].split("\n")[0])
     
     def _create_mock_response(self, goal: str) -> Dict[str, Any]:
